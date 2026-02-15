@@ -1,6 +1,7 @@
 package envx
 
 import (
+	"os"
 	"testing"
 	"time"
 )
@@ -162,5 +163,74 @@ func TestLoad_UnexportedIgnored(t *testing.T) {
 	err := Load(&c, Options{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoad_Pointers(t *testing.T) {
+	t.Setenv("PORT", "8080")
+
+	type cfg struct {
+		Port *int `env:"PORT"`
+	}
+
+	var c cfg
+	if err := Load(&c, Options{}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if c.Port == nil {
+		t.Fatal("expected Port pointer to be initialized")
+	}
+
+	if *c.Port != 8080 {
+		t.Fatalf("expected 8080, got %d", *c.Port)
+	}
+}
+
+func TestLoad_DotEnvQuotes(t *testing.T) {
+	// Create a temp .env file
+	content := "API_KEY=\"secret-key-123\"\nAPP_NAME='My App'"
+	tmpFile, _ := os.CreateTemp("", ".env")
+	defer os.Remove(tmpFile.Name())
+	tmpFile.WriteString(content)
+	tmpFile.Close()
+
+	type cfg struct {
+		Key  string `env:"API_KEY"`
+		Name string `env:"APP_NAME"`
+	}
+
+	var c cfg
+	err := Load(&c, Options{DotEnvPath: tmpFile.Name()})
+	if err != nil {
+		t.Fatalf("failed to load dotenv: %v", err)
+	}
+
+	if c.Key != "secret-key-123" {
+		t.Errorf("expected secret-key-123, got %s", c.Key)
+	}
+
+	// Note: If you only handled double quotes in your code,
+	// this will help you see if you need to add single quote handling too.
+	if c.Name != "My App" {
+		t.Errorf("expected My App, got %s", c.Name)
+	}
+}
+
+func TestLoad_SliceTrimming(t *testing.T) {
+	t.Setenv("LIST", " one, two , three ")
+
+	type cfg struct {
+		List []string `env:"LIST"`
+	}
+
+	var c cfg
+	Load(&c, Options{})
+
+	expected := []string{"one", "two", "three"}
+	for i, v := range c.List {
+		if v != expected[i] {
+			t.Errorf("expected %q, got %q", expected[i], v)
+		}
 	}
 }

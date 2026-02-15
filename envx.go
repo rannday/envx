@@ -71,9 +71,16 @@ func setField(field reflect.Value, value string) error {
 		return nil
 	}
 
-	var durationType = reflect.TypeOf(time.Duration(0))
+	// Handle pointer types by initializing them
+	if field.Kind() == reflect.Ptr {
+		if field.IsNil() {
+			field.Set(reflect.New(field.Type().Elem()))
+		}
+		field = field.Elem()
+	}
 
-	if field.Type() == durationType {
+	// Handle time.Duration
+	if field.Type() == reflect.TypeOf(time.Duration(0)) {
 		d, err := time.ParseDuration(value)
 		if err != nil {
 			return err
@@ -82,37 +89,31 @@ func setField(field reflect.Value, value string) error {
 		return nil
 	}
 
+	// Handle String Slices
 	if field.Kind() == reflect.Slice && field.Type().Elem().Kind() == reflect.String {
 		parts := strings.Split(value, ",")
 		for i := range parts {
 			parts[i] = strings.TrimSpace(parts[i])
 		}
-		slice := reflect.MakeSlice(field.Type(), len(parts), len(parts))
-		for i, v := range parts {
-			slice.Index(i).SetString(v)
-		}
-		field.Set(slice)
+		field.Set(reflect.ValueOf(parts))
 		return nil
 	}
 
 	switch field.Kind() {
 	case reflect.String:
 		field.SetString(value)
-
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		i, err := strconv.ParseInt(value, 10, field.Type().Bits())
 		if err != nil {
 			return err
 		}
 		field.SetInt(i)
-
 	case reflect.Bool:
 		b, err := strconv.ParseBool(value)
 		if err != nil {
 			return err
 		}
 		field.SetBool(b)
-
 	default:
 		return fmt.Errorf("unsupported type: %s", field.Kind())
 	}
