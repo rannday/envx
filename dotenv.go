@@ -2,16 +2,20 @@ package envx
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"strings"
+	"unicode"
 )
 
-func loadDotEnv(path string) error {
+func parseDotEnv(path string) (map[string]string, error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer file.Close()
+
+	values := make(map[string]string)
 
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
@@ -28,14 +32,15 @@ func loadDotEnv(path string) error {
 		}
 
 		key := strings.TrimSpace(parts[0])
-		value := strings.TrimSpace(parts[1])
-
-		// Remove inline comments (e.g. KEY=VAL # comment)
-		if idx := strings.Index(value, " #"); idx != -1 {
-			value = strings.TrimSpace(value[:idx])
+		key = strings.TrimPrefix(key, "export ")
+		key = strings.TrimSpace(key)
+		if key == "" {
+			return nil, fmt.Errorf("invalid dotenv line: %q", line)
 		}
 
-		// Strip surrounding quotes (double or single)
+		value := strings.TrimSpace(parts[1])
+		value = stripInlineComment(value)
+
 		if len(value) >= 2 {
 			if (value[0] == '"' && value[len(value)-1] == '"') ||
 				(value[0] == '\'' && value[len(value)-1] == '\'') {
@@ -43,8 +48,48 @@ func loadDotEnv(path string) error {
 			}
 		}
 
-		os.Setenv(key, value)
+		values[key] = value
 	}
 
-	return scanner.Err()
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+
+	return values, nil
+}
+
+func stripInlineComment(value string) string {
+	inSingle := false
+	inDouble := false
+
+	for i, r := range value {
+		switch r {
+		case '\'':
+			if !inDouble {
+				inSingle = !inSingle
+			}
+		case '"':
+			if !inSingle {
+				inDouble = !inDouble
+			}
+		case '#':
+			if inSingle || inDouble {
+				continue
+			}
+
+			if i == 0 {
+				return ""
+			}
+
+			prev := []rune(value[:i])
+			if len(prev) == 0 {
+				return ""
+			}
+			if unicode.IsSpace(prev[len(prev)-1]) {
+				return strings.TrimSpace(value[:i])
+			}
+		}
+	}
+
+	return strings.TrimSpace(value)
 }

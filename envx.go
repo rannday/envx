@@ -1,3 +1,4 @@
+// Package envx provides a simple way to load environment variables into a struct.
 package envx
 
 import (
@@ -11,18 +12,24 @@ import (
 )
 
 type Options struct {
+	// DotEnvPath is an optional development-only fallback file.
+	// Runtime environment variables always take precedence.
 	DotEnvPath string
 }
 
 func Load(cfg any, opts Options) error {
+	var dotEnv map[string]string
+
 	if opts.DotEnvPath != "" {
-		if err := loadDotEnv(opts.DotEnvPath); err != nil {
+		parsed, err := parseDotEnv(opts.DotEnvPath)
+		if err != nil {
 			return err
 		}
+		dotEnv = parsed
 	}
 
 	v := reflect.ValueOf(cfg)
-	if v.Kind() != reflect.Pointer || v.Elem().Kind() != reflect.Struct {
+	if !v.IsValid() || v.Kind() != reflect.Pointer || v.IsNil() || v.Elem().Kind() != reflect.Struct {
 		return errors.New("cfg must be pointer to struct")
 	}
 
@@ -42,19 +49,19 @@ func Load(cfg any, opts Options) error {
 			continue
 		}
 
-		value := os.Getenv(key)
-
-		if value == "" {
-			value = fieldType.Tag.Get("default")
-		}
+		value, ok := resolveValue(key, fieldType, dotEnv)
 
 		required := strings.EqualFold(fieldType.Tag.Get("required"), "true")
+		allowEmpty := strings.EqualFold(fieldType.Tag.Get("allowempty"), "true")
 
-		if value == "" && required {
+		if !ok && required {
 			return fmt.Errorf("missing required env: %s", key)
 		}
+		if required && value == "" && !allowEmpty {
+			return fmt.Errorf("required env is empty: %s", key)
+		}
 
-		if value == "" {
+		if !ok {
 			continue
 		}
 
@@ -64,6 +71,24 @@ func Load(cfg any, opts Options) error {
 	}
 
 	return nil
+}
+
+func resolveValue(key string, fieldType reflect.StructField, dotEnv map[string]string) (string, bool) {
+	if value, ok := os.LookupEnv(key); ok {
+		return value, true
+	}
+
+	if dotEnv != nil {
+		if value, ok := dotEnv[key]; ok {
+			return value, true
+		}
+	}
+
+	if value, ok := fieldType.Tag.Lookup("default"); ok {
+		return value, true
+	}
+
+	return "", false
 }
 
 func setField(field reflect.Value, value string) error {
